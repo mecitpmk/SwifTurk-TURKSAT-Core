@@ -13,11 +13,13 @@
 -> Descent Control System is ready.
 
   -Remaining Part : Real motor will be implemented.
+  
   -Remaining Part : PWM wrapper will be implemented based on RPM.
   
   
 -> Telemetry Transmission with 1 Hz implemented.
-  -Remaining Part : Save it to SD-Card
+ 
+ -Remaining Part : Save it to SD-Card
 
 
 -> Sending Manual Release and others command has been implemented to GCS.
