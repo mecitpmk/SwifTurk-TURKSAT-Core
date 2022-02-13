@@ -32,13 +32,3 @@ struct Packet_UART_Interface PCGK_UART    =  { .dataPacket = &myPacket , .uartIn
 ///////////// INIT VARIABLES ///////////////////
 
 
-
-
-void cleanUartBuffers(uint8_t * const Buffer , const uint16_t BufferSize)
-{
-	for ( uint16_t i = 0 ; i < BufferSize ; i++ )
-	{
-		Buffer[i] = '\0';
-	}
-
-}

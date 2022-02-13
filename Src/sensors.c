@@ -16,8 +16,8 @@
 #define TRUE 1
 #define FALSE 0
 
-struct Sensors_Boundry Sensor_Boundries	= { .MIN_ALT = 0 ,  .MAX_ALT = 1000 , .MIN_PRESS = 0 , .MAX_PRESS = 18453 , .MIN_TEMP = 0 , .MAX_TEMP = 40 ,
-										    .MIN_PITCH = 0 ,.MAX_PITCH = 34,  .MIN_ROLL = 0 , .MAX_ROLL = 34 , .MIN_YAW = 0 , .MAX_YAW = 34};
+const struct Sensors_Boundry Sensor_Boundries	= { .MIN_ALT = 0 ,  .MAX_ALT = 1000 , .MIN_PRESS = 0 , .MAX_PRESS = 18453 , .MIN_TEMP = 0 , .MAX_TEMP = 40 ,
+										    	    .MIN_PITCH = 0 ,.MAX_PITCH = 34,  .MIN_ROLL = 0 , .MAX_ROLL = 34 , .MIN_YAW = 0 , .MAX_YAW = 34};
 
 
 struct IMU IMU_Data			= {0};

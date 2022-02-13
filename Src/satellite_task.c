@@ -23,16 +23,30 @@ TimerHandle_t sensorTimer		= NULL;
 TimerHandle_t healthDataTimer	= NULL;
 TimerHandle_t fixedAltTimer		= NULL;
 
+typedef enum
+{
+	UART_RX_EVENT 	= 0x01,
+	TELEMETRI_SEND 	= 0x08
+
+}TSTSTS;
 
 
 void HAL_UARTEx_RxEventCallback( UART_HandleTypeDef *huart, uint16_t Size )
 {
 
-	if ( USART2 == huart->Instance )
-	{
-		controlFlags.uartRX_ReceiveCmpltd = TRUE;
-		uartBuffers.LastReceivedByte = Size;							      // transfer total received bytes to LastReceivedByte
-	}
+	BaseType_t xHigherPriorityTaskWoken;
+	xHigherPriorityTaskWoken = pdFALSE;
+
+	uartBuffers.LastReceivedByte = Size;							      // transfer total received bytes to LastReceivedByte
+
+	uint32_t EVENT = (uint32_t)UART_RX_EVENT ;
+
+	xTaskNotifyFromISR( CommunucationTASK_HANDLE ,
+						EVENT ,
+						eSetBits ,
+						&xHigherPriorityTaskWoken );
+
+	portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
 }
 
 
@@ -57,30 +71,36 @@ void fixAltTimerCLLBCK( TimerHandle_t pxTimer ) // This callback Timer function 
 
 void sensorTimerCLLBCK( TimerHandle_t pxTimer )
 {
+	// AMAC = HARDWARE TIMER ICIN HAZIRLIK !
 
-	TickType_t currentTime  = xTaskGetTickCount();
-	while ( xTaskGetTickCount() - currentTime < 100 ) // Purpose : if the Below If condition is not satisfied, give the sensor or container 100 ms. Maybe they will satisfied in 100ms tolerance.
-	{
-		if ( ( D_READY == sensorDataRdyFlag ) && ( CONTAINER_DATA_COLLECTED == CONTAINER_TELEM_STATUS ) ) // IF all sensors are readed and container datas have been collected.
-		{
-			// send copied 1HZ Telem buffer with  UART in HERE.
-			transferContainerDatatoMainStruct(); // Combine Container Datas.
-			sendTelemetryData( TELEM_1HZ );
-			logData( PAYLOAD_DATA );
+	/* HW Timer Callback ile yapacak isek assagidaki documentasyona gore ;
+	 * xTaskToNotify 	: CommunucationTASK_HANDLE
+	 * uxIndexToNotify 	: 0 (0.Index yani atıyorum baska bir NotifyBekleyen yer varsa diye bu sekilde.)
+	 * ulValue 			: u32 bir value verecegiz buraya atıyorum 0 = TELEMETRI_SEND olsun,
+	 * 					  waitINDEXED yapan (xTaskNotifyWaitIndexed) fonksiyon aktive olduğunda
+	 * 					  if condition koşacağız if ( TELEMETRI_SEND == STATUS )
+	 * 					  VEYA 					 if ( UART_RX_Event  == STATUS )
+	 * 					  ona göre bir yonlendirme olacak.
+	 * pxHigherPriorityTaskWoken : fonksiyon basinda tanimlayacağız bunu ve adress'ini verecegiz &pxHigherPriorityTaskWoken seklinde.
 
-			vTaskSuspendAll();
-			controlFlags.TELEM_DATA_COPIED  = FALSE	;
-			controlFlags.TelemetryNeeded 	= TRUE	;
-			sensorDataRdyFlag 				= FALSE	;
-			Telemetry_1HZ_Data.PACKET_NUMBER += 1	;
-//			CONTAINER_TELEM_STATUS = CONTAINER_DATA_NOT_COLLECTED;  // GCS ile Haberleşme Testi icin Commentledim.
-			xTaskResumeAll();
-			return;
-		}
-	}
+     * https://www.freertos.org/xTaskNotifyFromISR.html
 
+	 * BaseType_t xTaskNotifyIndexedFromISR( TaskHandle_t xTaskToNotify,
+                                       UBaseType_t uxIndexToNotify,
+                                       uint32_t ulValue,
+                                       eNotifyAction eAction,
+                                       BaseType_t *pxHigherPriorityTaskWoken );
+	 *
+	 */
 
 
+
+    uint32_t EVENT = (uint32_t)TELEMETRI_SEND;
+    xTaskNotify( CommunucationTASK_HANDLE,
+    			EVENT,
+				eSetBits);
+
+//    portYIELD();
 }
 void healthTimerCLLBCK( TimerHandle_t pxTimer )
 {
@@ -138,34 +158,45 @@ void CommunucationTASK( void * pvParameters )
 	xTimerStart( healthDataTimer , portMAX_DELAY );
 	HAL_UARTEx_ReceiveToIdle_DMA( PCGK_UART.uartInterface , uartBuffers.RX_Buffer, RX_BUFFER_SIZE );
 	__HAL_DMA_DISABLE_IT( &hdma_usart2_rx , DMA_IT_HT );
+
+	uint32_t NOTIFIED_VALUE;
 	for(;;)
 	{
-		// IDLE RX checks is RX flag ready
 
-			// checks async data sending flags. (IMPLEMENT LATER ON)
-				// IDLE Rx Event Cllbck makes flag true
-					// if ( flags.UartDataAvailable) ... Copy RX Buffer to MainUartBuffer and clean RX Buffer and go to handleTelemPackage();
+		xTaskNotifyWait( 0, 0xFFFFFFFF  , &NOTIFIED_VALUE, portMAX_DELAY );
 
-		// if ( flags.uartDataAvaiable && !controlFlags.isUartHANDLING )
-		// memcpy(mainuart , rxbuffer , sizeof mainuart )
-		// clearUartBuffer(rxbuffer)
-		// controlFlags.isUartHANDLING = TRUE
-		// __HAL_ENABLE_RX_IDLE_DMA
-		// handleTelemPackage();
-		if ( TRUE == controlFlags.uartRX_ReceiveCmpltd )
+		if ( ( TELEMETRI_SEND & NOTIFIED_VALUE ) != 0 )
 		{
-			cleanUartBuffers( uartBuffers.Main_Uart_Buffer, MAIN_BUFFER_SIZE );   // clear the Main buffer first
+			if ( ( D_READY == sensorDataRdyFlag ) && ( CONTAINER_DATA_COLLECTED == CONTAINER_TELEM_STATUS ) ) // IF all sensors are readed and container datas have been collected.
+			{
+				transferContainerDatatoMainStruct(); // Combine Container Datas.
+				sendTelemetryData( TELEM_1HZ );
+				logData( PAYLOAD_DATA );
+
+				vTaskSuspendAll();
+				controlFlags.TELEM_DATA_COPIED  = FALSE	;
+				controlFlags.TelemetryNeeded 	= TRUE	;
+				sensorDataRdyFlag 				= FALSE	;
+				Telemetry_1HZ_Data.PACKET_NUMBER += 1	;
+	//			CONTAINER_TELEM_STATUS = CONTAINER_DATA_NOT_COLLECTED;  // GCS ile Haberleşme Testi icin Commentledim.
+				xTaskResumeAll();
+			}
+
+
+		}
+		if ( ( UART_RX_EVENT & NOTIFIED_VALUE ) != 0 )
+		{
+			memset( uartBuffers.Main_Uart_Buffer, '\0' , MAIN_BUFFER_SIZE ); // Copy the received bytes to Main Buffers.
 			memcpy( uartBuffers.Main_Uart_Buffer, uartBuffers.RX_Buffer , uartBuffers.LastReceivedByte ); // Copy the received bytes to Main Buffers.
-			cleanUartBuffers( uartBuffers.RX_Buffer, RX_BUFFER_SIZE );			  // clear the RX buffer after the copying process.
+			memset( uartBuffers.RX_Buffer , '\0' ,RX_BUFFER_SIZE );
 
-			controlFlags.uartRX_ReceiveCmpltd = FALSE;
-
+			handleTelemPackage();
 
 			HAL_UARTEx_ReceiveToIdle_DMA( PCGK_UART.uartInterface , uartBuffers.RX_Buffer, RX_BUFFER_SIZE );
 			__HAL_DMA_DISABLE_IT( &hdma_usart2_rx , DMA_IT_HT );
 
-			handleTelemPackage();
 		}
+
 
 	}
 	return;

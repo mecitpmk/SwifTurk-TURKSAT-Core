@@ -40,8 +40,9 @@ union controlPanel
         uint32_t isUartHANDLING			: 1	;
         uint32_t isSeperatingMechanismActive : 1;
 
-        uint32_t TELEM_DATA_COPIED		: 1 ;
-        uint32_t uartRX_ReceiveCmpltd	: 1;
+        uint32_t TELEM_DATA_COPIED				: 1 ;
+        uint32_t isvideoSendingProcessActive 	: 1	;
+
 	};
 
 

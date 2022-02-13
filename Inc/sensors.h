@@ -55,7 +55,7 @@ struct Sensors_Boundry
 
 
 
-extern struct Sensors_Boundry    Sensor_Boundries;
+extern const struct Sensors_Boundry	Sensor_Boundries;
 extern struct IMU IMU_Data;
 extern struct BMP_Sensor BMP_Data;
 

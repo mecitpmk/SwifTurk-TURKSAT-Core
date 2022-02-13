@@ -268,9 +268,9 @@ void taskFunctionComm( void * pvParameters )
 		if ( RECEIVE_COMPLETED == receivedFlag ) // if the data transmission has been identified and processed
 		{
 
-			cleanUartBuffers( uartBuffers.Main_Uart_Buffer, MAIN_BUFFER_SIZE );   // clear the Main buffer first
+			memset( uartBuffers.Main_Uart_Buffer, '\0' , MAIN_BUFFER_SIZE ); // Copy the received bytes to Main Buffers.
 			memcpy( uartBuffers.Main_Uart_Buffer, uartBuffers.RX_Buffer , uartBuffers.LastReceivedByte ); // Copy the received bytes to Main Buffers.
-			cleanUartBuffers( uartBuffers.RX_Buffer, RX_BUFFER_SIZE );			  // clear the RX buffer after the copying process.
+			memset( uartBuffers.RX_Buffer , '\0' ,RX_BUFFER_SIZE );
 
 			while ( HAL_UART_Transmit_DMA( &huart2, ( UINT8 * )RX_MES_RECEIVED, strlen( RX_MES_RECEIVED ) ) != HAL_OK ); // print RX Message has been received
 			while ( HAL_UART_Transmit_DMA( &huart2, uartBuffers.Main_Uart_Buffer, uartBuffers.LastReceivedByte )  != HAL_OK ); // print Received Message

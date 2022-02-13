@@ -98,6 +98,4 @@ extern struct Packet_UART_Interface PCGK_UART;
 //////////////////////////////// END OF STRUCT PARTS ////////////////////////////////
 
 
-// Function Prototypes
-void cleanUartBuffers(uint8_t * const Buffer , const uint16_t BufferSize);
 

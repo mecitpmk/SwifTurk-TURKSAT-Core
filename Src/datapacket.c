@@ -27,9 +27,12 @@
 
 //Static Function Prototypes
 static void solvePackageType( void );
-static TELEM_VALID_STATUS isEOF_SOF_VALID( void );
 static void handleManualCommands( void );
 static void handleGCSMission( void );
+static void GCS_Command_Inconsistent ( void );
+static void resetParserPositions ( void );
+static void bufferParser ( void );
+
 
 
 //Externs
@@ -63,6 +66,16 @@ GCS_Telemetry_t 		GCS_Telemetry			= {.START_OF_FRAME = SOF_HEADER , .END_OF_FRAM
 VideoHandler_t			VideoHandler 			= {.START_OF_FRAME = SOF_HEADER , .END_OF_FRAME = EOF_HEADER , .PACKAGE_TYPE = VIDEO_PACKAGE_REQUEST , .videoID = 1};
 
 
+
+typedef struct
+{
+	uint16_t startPosition;
+	uint16_t endPosition;
+	uint8_t  isVALID;
+}Eof_Seof_t;
+
+static Eof_Seof_t parsedDataInfo = {.startPosition = 0,.endPosition = 0,.isVALID = 0};
+
 // COPY STRUCT
 
 //static struct GCS_Tel_Response GCS_TEL_RESP_BUFF = { .START_OF_FRAME = SOF_HEADER  , .END_OF_FRAME = EOF_HEADER , .PACKAGE_TYPE = GCS_TELEM_RESPONSE };
@@ -93,7 +106,7 @@ void sendTelemetryData( const uint8_t TELEM_PACKAGE_TYPES )
 			while ( HAL_UART_Transmit_DMA( PCGK_UART.uartInterface,  ( uint8_t* )&VideoHandler, sizeof ( VideoHandler ) ) != HAL_OK ); // Print waiting for data only just one time.
 			break;
 		case GCS_TELEM_RESPONSE:
-//			while ( HAL_UART_Transmit_DMA( PCGK_UART.uartInterface,  ( uint8_t* )&GCS_Telemetry_Response, sizeof ( GCS_Telemetry_Response ) ) != HAL_OK );
+			while ( HAL_UART_Transmit_DMA( PCGK_UART.uartInterface,  ( uint8_t* )&GCS_Telemetry_Response, sizeof ( GCS_Telemetry_Response ) ) != HAL_OK );
 			break;
 		default :
 			break;
@@ -109,21 +122,41 @@ static void solvePackageType( void )
 	 *  or if its about Container telemetry copy it immediately.
 	 */
 
-	switch ( uartBuffers.Main_Uart_Buffer[PACKAGE_TYPE_IDX] )
+	switch ( uartBuffers.Main_Uart_Buffer[ parsedDataInfo.startPosition +4 ] )
 	{
 		case CONTAINER_TELEMETRY:
-			memcpy( &Telemetry_Container , uartBuffers.Main_Uart_Buffer , sizeof( Telemetry_Container ) );
-			vTaskSuspendAll();
-			CONTAINER_TELEM_STATUS = CONTAINER_DATA_COLLECTED;
-			xTaskResumeAll();
+			if ( ( ( parsedDataInfo.endPosition+3 - parsedDataInfo.startPosition )+1 ) == sizeof( GCS_Telemetry ) )
+			{
+				memcpy( &Telemetry_Container , uartBuffers.Main_Uart_Buffer , sizeof( Telemetry_Container ) );
+				vTaskSuspendAll();
+				CONTAINER_TELEM_STATUS = CONTAINER_DATA_COLLECTED;
+				xTaskResumeAll();
+			}
 			break;
 		case GCS_TELEM_MISSION:
-			memcpy( &GCS_Telemetry , uartBuffers.Main_Uart_Buffer, sizeof( GCS_Telemetry ) );
-			handleGCSMission();
+			if ( ( ( parsedDataInfo.endPosition+3 - parsedDataInfo.startPosition )+1 ) == sizeof( GCS_Telemetry ) )
+			{
+				controlFlags.isvideoSendingProcessActive = TRUE;
+				memcpy( &GCS_Telemetry , uartBuffers.Main_Uart_Buffer, sizeof( GCS_Telemetry ) );
+				handleGCSMission();
+			}
+			else
+			{
+				GCS_Command_Inconsistent();
+			}
+
 			break;
 		case GCS_TELEM_COMMAND:
-			memcpy( &GCS_Command , uartBuffers.Main_Uart_Buffer , sizeof( GCS_Command ) );
-			handleManualCommands();
+			if ( ( ( parsedDataInfo.endPosition+3 - parsedDataInfo.startPosition )+1 ) == sizeof( GCS_Command ) )
+			{
+				memcpy( &GCS_Command , uartBuffers.Main_Uart_Buffer , sizeof( GCS_Command ) );
+				handleManualCommands();
+			}
+			else
+			{
+				GCS_Command_Inconsistent();
+			}
+
 			break;
 		default :
 			break;
@@ -131,16 +164,7 @@ static void solvePackageType( void )
 
 }
 
-static TELEM_VALID_STATUS isEOF_SOF_VALID( void )
-{
-	uint32_t U32_SOF_HEADER = uartBuffers.Main_Uart_Buffer[EOF_IDX] << 24 | uartBuffers.Main_Uart_Buffer[EOF_IDX+1] << 16 |uartBuffers.Main_Uart_Buffer[EOF_IDX +2] << 8 | uartBuffers.Main_Uart_Buffer[EOF_IDX+3] ;
-	uint32_t U32_EOF_HEADER = uartBuffers.Main_Uart_Buffer[ ( uartBuffers.LastReceivedByte -1 )-3 ] << 24 | uartBuffers.Main_Uart_Buffer[( uartBuffers.LastReceivedByte -1 )-2] << 16 |uartBuffers.Main_Uart_Buffer[( uartBuffers.LastReceivedByte -1 )-1] << 8 | uartBuffers.Main_Uart_Buffer[( uartBuffers.LastReceivedByte -1 ) ] ;
-	if ( SOF_HEADER == U32_SOF_HEADER && EOF_HEADER == U32_EOF_HEADER )
-	{
-		return TELEM_VALIDATED;
-	}
-	return TELEM_ERROR; // ITS NOT STARTS WITH SOF_HEADER and ITS NOT END WITH EOF_HEADER!!
-}
+
 
 
 void transferContainerDatatoMainStruct( void )
@@ -172,12 +196,24 @@ static void handleManualCommands( void )
 			xTimerStart( fixedAltTimer, portMAX_DELAY ); // start timer for 10 sec.
 			testMotorWORK(); // This function gives a motor constant speed .
 			break;
+		default:
+			break;
 	}
+
+	if ( controlFlags.isvideoSendingProcessActive )
+	{
+		sendTelemetryData( VIDEO_PACKAGE_REQUEST );
+	}
+
 }
 
 static void handleGCSMission( void )
 {
 
+	/* Timer oldugunu düşünelim  bu fonksiyona girdiğinde timer reset Atsın, fonksyion sonunda timer tekrar Start etsin.( ifnot gcsTelemetry.isEnd)
+	 *  Amaç, eğer 200 ms geçmişse ve gcsTelemetry.isEnd degilse, yani paketi bana niye yollamıyosun?
+	 *     Uyarı gönder ki bana göndermeye başlasın.
+	 */
 	if (VIDEO_NOT_SAVED == Telemetry_1HZ_Data.VIDEO_TRANSMISSION_STATUS)
 	{
 		if ( GCS_Telemetry.videoID == VideoHandler.videoID )
@@ -187,45 +223,81 @@ static void handleGCSMission( void )
 			// Incoming Video ID is correct. Take it and Store it to SD Card.
 			// storeVideoToSD()
 			if ( GCS_Telemetry.isEnd )
-				{
-					vTaskSuspendAll();
-					Telemetry_1HZ_Data.VIDEO_TRANSMISSION_STATUS = VIDEO_SAVED ; // Change flags.
-					controlFlags.readyToSendSavedVideo			 = VIDEO_SAVED ; // That flags says us to you can send SAVED video's to another frequency bands.
-					xTaskResumeAll();
-				}
-				else
-				{
-					VideoHandler.videoID += 1;
-					sendTelemetryData( VIDEO_PACKAGE_REQUEST );
-				}
+			{
+				vTaskSuspendAll();
+				Telemetry_1HZ_Data.VIDEO_TRANSMISSION_STATUS = VIDEO_SAVED ; // Change flags.
+				controlFlags.readyToSendSavedVideo			 = VIDEO_SAVED ; // That flags says us to you can send SAVED video's to another frequency bands.
+				xTaskResumeAll();
+			}
+			else
+			{
+				VideoHandler.videoID += 1;
+				sendTelemetryData( VIDEO_PACKAGE_REQUEST );
+			}
 		}
 	}
-
-
-
 }
+
+
+
+static void resetParserPositions ( void )
+{
+	parsedDataInfo.startPosition 	= 0;
+	parsedDataInfo.endPosition   	= 0;
+	parsedDataInfo.isVALID			= 0;
+}
+
+static void bufferParser ( void )
+{
+
+	resetParserPositions();
+	uint8_t findedBefore = FALSE ;
+	for (uint16_t i = 0 ; i < MAIN_BUFFER_SIZE-4; i++) // Change MAIN_BUFFER_SIZE to uartBuffers.LastReceivedByte
+	{
+		if (  uartBuffers.Main_Uart_Buffer[i] == 0x5A  &&  uartBuffers.Main_Uart_Buffer[i+1] == 0x5A  && uartBuffers.Main_Uart_Buffer[i+2] == 0x5A  && uartBuffers.Main_Uart_Buffer[i+3] == 0x5A   )
+		{
+			if ( !findedBefore )
+			{
+				parsedDataInfo.startPosition = i;
+				findedBefore = TRUE;
+			}
+			else
+			{
+				parsedDataInfo.endPosition 	= i;
+				parsedDataInfo.isVALID		= TRUE;
+				break;
+			}
+		}
+	}
+}
+
+
+static void GCS_Command_Inconsistent ( void )
+{
+	// Increase fault counter , Send Response to GCS ( says hey your SOF_HEADER and EOF_HEADER IS NOT OKAY, SEND me them again.)
+	// or SOF_HEADER and EOF_HEADER is OK But Size IS NOT OK!
+	vTaskSuspendAll();
+	Telemetry_Health_Data.Fault_in_GCS_TELEM += 1;
+	xTaskResumeAll();
+	GCS_Telemetry_Response.RESPONSE_STATUS = TELEM_ERROR;
+	sendTelemetryData( GCS_TELEM_RESPONSE );
+}
+
 void handleTelemPackage ( void )
 {
 
-	TELEM_VALID_STATUS isTelemValidated = isEOF_SOF_VALID();
-	if ( TELEM_VALIDATED == isTelemValidated )
+
+	bufferParser();
+	if ( TELEM_VALIDATED == parsedDataInfo.isVALID)
 	{
 		// telem is validated checks whats the telemetry type.
 		solvePackageType();
 	}
 	else
 	{
-
-		// Increase fault counter , Send Response to GCS ( says hey your SOF_HEADER and EOF_HEADER IS NOT OKAY, SEND me them again.)
-		vTaskSuspendAll();
-		Telemetry_Health_Data.Fault_in_GCS_TELEM += 1;
-		xTaskResumeAll();
-		GCS_Telemetry_Response.RESPONSE_STATUS = TELEM_ERROR;
-//		sendTelemetryData( GCS_TELEM_RESPONSE );
-
+		GCS_Command_Inconsistent();
 	}
-//	HAL_UARTEx_ReceiveToIdle_DMA( PCGK_UART.uartInterface , uartBuffers.RX_Buffer, RX_BUFFER_SIZE );
-//	__HAL_DMA_DISABLE_IT( &hdma_usart2_rx , DMA_IT_HT );
+
 
 
 
